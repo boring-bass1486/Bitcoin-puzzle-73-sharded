@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang
+
+      - name: Check AVX-512 support
+        id: avx512
+        run: |
+          if grep -q avx512f /proc/cpuinfo; then
+            echo "supported=true"  >> "$GITHUB_OUTPUT"
+            echo "Runner supports AVX-512 — full build + smoke test."
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "Runner does not support AVX-512 — compile-only check (no -march=native)."
+          fi
+
+      - name: Build (native, AVX-512 runner)
+        if: steps.avx512.outputs.supported == 'true'
+        run: make
+
+      - name: Smoke test — --help exits 0 (native)
+        if: steps.avx512.outputs.supported == 'true'
+        run: ./main --help
+
+      - name: Build (explicit flags, non-AVX-512 runner)
+        if: steps.avx512.outputs.supported == 'false'
+        run: |
+          clang -Wno-everything -pthread -lm \
+            -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512vbmi -mavx512ifma \
+            -mbmi2 -O2 -fomit-frame-pointer \
+            main.c -o main
+          echo "Compiled successfully (AVX-512 flags accepted by compiler)."
+          echo "Binary not executed — runner CPU lacks AVX-512 support."
